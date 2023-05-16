@@ -6,6 +6,7 @@ import imageio
 import psutil
 from pathlib import Path
 import random
+import shutil
 import warnings
 import tensorboardX
 
@@ -221,6 +222,7 @@ class Trainer(object):
         self.epoch = 0
         self.global_step = 0
         self.local_step = 0
+        self.exp_step = 0
         self.stats = {
             "loss": [],
             "valid_loss": [],
@@ -243,6 +245,10 @@ class Trainer(object):
             self.ckpt_path = os.path.join(self.workspace, 'checkpoints')
             self.best_path = f"{self.ckpt_path}/{self.name}.pth"
             os.makedirs(self.ckpt_path, exist_ok=True)
+
+            # Save a copy of image_config in the experiment workspace
+            if opt.image_config is not None:
+                shutil.copyfile(opt.image_config, os.path.join(self.workspace, os.path.basename(opt.image_config)))
 
         self.log(f'[INFO] Cmdline: {self.argv}')
         self.log(f'[INFO] Trainer: {self.name} | {self.time_stamp} | {self.device} | {"fp16" if self.fp16 else "fp32"} | {self.workspace}')
@@ -371,7 +377,7 @@ class Trainer(object):
 
         # progressively relaxing view range
         if self.opt.progressive_view:
-            r = min(1.0, 0.2 + self.global_step / (0.5 * self.opt.iters))
+            r = min(1.0, 0.2 + self.exp_step / (0.5 * self.opt.iters))
             self.opt.phi_range = [self.opt.default_azimuth * (1 - r) + self.opt.full_phi_range[0] * r,
                                   self.opt.default_azimuth * (1 - r) + self.opt.full_phi_range[1] * r]
             self.opt.theta_range = [self.opt.default_polar * (1 - r) + self.opt.full_theta_range[0] * r,
@@ -383,7 +389,7 @@ class Trainer(object):
 
         # progressively increase max_level
         if self.opt.progressive_level:
-            self.model.max_level = min(1.0, 0.25 + self.global_step / (0.5 * self.opt.iters))
+            self.model.max_level = min(1.0, 0.25 + self.exp_step / (0.5 * self.opt.iters))
 
         rays_o = data['rays_o'] # [B, N, 3]
         rays_d = data['rays_d'] # [B, N, 3]
@@ -408,7 +414,7 @@ class Trainer(object):
             binarize = False
             bg_color = torch.rand((B * N, 3), device=rays_o.device)
 
-            # add camera noise to avoid grid-like artifect
+            # add camera noise to avoid grid-like artifact
             if self.opt.known_view_noise_scale > 0:
                 noise_scale = self.opt.known_view_noise_scale #* (1 - self.global_step / self.opt.iters)
                 rays_o = rays_o + torch.randn(3, device=self.device) * noise_scale
@@ -422,7 +428,6 @@ class Trainer(object):
             bg_color = None
 
         else:
-
             if self.global_step < (self.opt.albedo_iter_ratio * self.opt.iters):
                 ambient_ratio = 1.0
                 shading = 'albedo'
@@ -568,7 +573,8 @@ class Trainer(object):
                 azimuth = data['azimuth']
                 radius = data['radius']
 
-                loss = loss + self.guidance['zero123'].train_step(self.embeddings['zero123']['default'], pred_rgb, polar, azimuth, radius, guidance_scale=self.opt.guidance_scale, as_latent=as_latent, grad_scale=self.opt.lambda_guidance)
+                loss = loss + self.guidance['zero123'].train_step(self.embeddings['zero123']['default'], pred_rgb, polar, azimuth, radius, guidance_scale=self.opt.guidance_scale,
+                                                                  as_latent=as_latent, grad_scale=self.opt.lambda_guidance, save_guidance_path=save_guidance_path)
 
             if 'clip' in self.guidance:
 
@@ -702,6 +708,8 @@ class Trainer(object):
 
         start_t = time.time()
 
+        self.exp_step = 0
+
         for epoch in range(self.epoch + 1, max_epochs + 1):
             self.epoch = epoch
 
@@ -713,7 +721,7 @@ class Trainer(object):
             if self.epoch % self.opt.eval_interval == 0:
                 self.evaluate_one_epoch(valid_loader)
                 self.save_checkpoint(full=False, best=True)
-            
+
             if self.epoch % self.opt.test_interval == 0 or self.epoch == max_epochs:
                 self.test(test_loader)
 
@@ -934,6 +942,7 @@ class Trainer(object):
 
             self.local_step += 1
             self.global_step += 1
+            self.exp_step += 1
 
             self.optimizer.zero_grad()
 
