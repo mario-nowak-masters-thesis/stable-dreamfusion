@@ -152,6 +152,8 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_size_valid', type=int, default=8, help="# of frames to render in the turntable video in validation")
     parser.add_argument('--dataset_size_test', type=int, default=100, help="# of frames to render in the turntable video at test time")
 
+    parser.add_argument('--trajectory_json', default=None, help="image config csv")
+
     opt = parser.parse_args()
 
     if opt.O:

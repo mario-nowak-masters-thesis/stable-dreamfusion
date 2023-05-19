@@ -191,7 +191,7 @@ class Trainer(object):
                 for p in self.guidance[key].parameters():
                     p.requires_grad = False
                 self.embeddings[key] = {}
-            self.prepare_embeddings()
+            self.prepare_embeddings() # ! this is where the training data is loaded
 
         if isinstance(criterion, nn.Module):
             criterion.to(self.device)
@@ -299,6 +299,7 @@ class Trainer(object):
                 self.embeddings['clip']['text'] = self.guidance['clip'].get_text_embeds(self.opt.text)
 
         if self.opt.images is not None:
+            # NOTE: load training images here
 
             h = int(self.opt.known_view_scale * self.opt.h)
             w = int(self.opt.known_view_scale * self.opt.w)
@@ -373,7 +374,7 @@ class Trainer(object):
 
         # override random camera with fixed known camera
         if do_rgbd_loss:
-            data = self.default_view_data
+            data = self.default_view_data # ! when viewing data is given
 
         # progressively relaxing view range
         if self.opt.progressive_view:

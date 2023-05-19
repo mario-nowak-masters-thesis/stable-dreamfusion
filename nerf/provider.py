@@ -246,6 +246,7 @@ class NeRFDataset:
         return data
 
     def collate(self, index):
+        # ! This gets called when creating the data loader 
 
         B = len(index)
 
