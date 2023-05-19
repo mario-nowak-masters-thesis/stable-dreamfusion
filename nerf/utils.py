@@ -510,7 +510,7 @@ class Trainer(object):
                 # lambda_depth = self.opt.lambda_depth #* min(1, self.global_step / self.opt.iters)
                 # loss = loss + lambda_depth * F.mse_loss(valid_pred_depth, valid_gt_depth)
 
-        # novel view loss
+        # novel view loss (SDS loss)
         else:
 
             loss = 0
