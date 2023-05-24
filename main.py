@@ -3,8 +3,9 @@ import argparse
 import pandas as pd
 import sys
 import json
+from camera_path import CameraPath
 
-from nerf.provider import ClassicNeRFDataset, NeRFDataset
+from nerf.provider import ClassicNeRFDataset, NeRFDataset, NeRFRenderingDataset
 from nerf.utils import *
 from transforms import Transforms
 
@@ -156,6 +157,7 @@ if __name__ == '__main__':
 
     # 
     parser.add_argument('--transforms_json', default=None, help="JSON file containing the transforms information with a format compatible with Nerfstudio")
+    parser.add_argument('--camera_path_json', default=None, help="JSON file containing the camera path used to render a video of a NeRF after training compatible with Nerfstudio")
 
     opt = parser.parse_args()
 
@@ -189,6 +191,13 @@ if __name__ == '__main__':
             opt.depth_images = [os.path.join(transforms_directory, frame.depth_file_path) for frame in opt.transforms.frames]
         opt.w = opt.transforms.width
         opt.h = opt.transforms.height
+
+    opt.camera_path = None
+    if opt.camera_path_json is not None:
+        with open(opt.camera_path_json, "r") as camera_path_json:
+            opt.camera_path = CameraPath(json.load(camera_path_json))
+        opt.w = opt.camera_path.render_width
+        opt.h = opt.camera_path.render_height
         
     # parameters for image-conditioned generation
     elif opt.image is not None or opt.image_config is not None:
@@ -348,8 +357,8 @@ if __name__ == '__main__':
             gui.render()
 
         else:
-            if opt.transforms is not None:
-                test_loader = ClassicNeRFDataset(opt, device, opt.transforms, type='test').dataloader(batch_size=1)
+            if opt.camera_path is not None:
+                train_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path).dataloader(batch_size=1)
             else:
                 test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
             trainer.test(test_loader)

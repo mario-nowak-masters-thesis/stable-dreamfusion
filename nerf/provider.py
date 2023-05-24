@@ -13,6 +13,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
+from camera_path import CameraPath
+
 from .utils import get_rays, safe_normalize
 from transforms import Transforms
 
@@ -390,5 +392,61 @@ class ClassicNeRFDataset:
     def dataloader(self, batch_size=None):
         batch_size = batch_size or self.opt.batch_size
         loader = DataLoader(list(range(self.size)), batch_size=batch_size, collate_fn=self.collate, shuffle=self.training, num_workers=0)
+        loader._data = self
+        return loader
+
+class NeRFRenderingDataset:
+    def __init__(self, opt, device, camera_path: CameraPath):
+        super().__init__()
+
+        self.opt = opt
+        self.device = device
+        self.type = type # train, val, test
+
+        self.camera_path = camera_path
+
+        self.H = self.camera_path.render_height
+        self.W = self.camera_path.render_width
+        self.size = len(camera_path)
+
+        self.cx = self.H / 2
+        self.cy = self.W / 2
+
+        self.near = self.opt.min_near
+        self.far = 1000 # infinite
+
+    def collate(self, index: list[int]):
+        fov = self.camera_path[index[0]].field_of_view
+
+        focal = self.H / (2 * np.tan(np.deg2rad(fov) / 2))
+        intrinsics = np.array([focal, focal, self.cx, self.cy])
+
+        poses = torch.stack([self.camera_path[i].camera_extrinsics for i in index])
+
+        projection = torch.tensor([
+            [2*focal/self.W, 0, 0, 0],
+            [0, -2*focal/self.H, 0, 0],
+            [0, 0, -(self.far+self.near)/(self.far-self.near), -(2*self.far*self.near)/(self.far-self.near)],
+            [0, 0, -1, 0]
+        ], dtype=torch.float32, device=self.device).unsqueeze(0)
+
+        mvp = projection @ torch.inverse(poses) # [1, 4, 4]
+
+        # sample a low-resolution but full image
+        rays = get_rays(poses, intrinsics, self.H, self.W, -1)
+
+        data = {
+            'H': self.H,
+            'W': self.W,
+            'rays_o': rays['rays_o'],
+            'rays_d': rays['rays_d'],
+            'mvp': mvp,
+        }
+
+        return data
+
+    def dataloader(self, batch_size=1):
+        batch_size = batch_size or self.opt.batch_size
+        loader = DataLoader(list(range(self.size)), batch_size=batch_size, collate_fn=self.collate, shuffle=False, num_workers=0)
         loader._data = self
         return loader
