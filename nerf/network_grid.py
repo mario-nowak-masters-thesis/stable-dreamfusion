@@ -68,9 +68,9 @@ class NeRFNetwork(NeRFRenderer):
     def common_forward(self, x):
 
         # sigma
-        enc = self.encoder(x, bound=self.bound, max_level=self.max_level)
+        enc = self.encoder(x, bound=self.bound, max_level=self.max_level) # NOTE: this allocate a lot of memory, more than 15GB
 
-        h = self.sigma_net(enc)
+        h = self.sigma_net(enc) # NOTE: this also allocates around 15GB of memory
 
         sigma = self.density_activation(h[..., 0] + self.density_blob(x))
         albedo = torch.sigmoid(h[..., 1:])

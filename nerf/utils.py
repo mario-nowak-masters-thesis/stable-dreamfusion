@@ -1,5 +1,6 @@
 import os
 import glob
+from typing import Union
 import tqdm
 import math
 import imageio
@@ -22,6 +23,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.distributed as dist
+from torch.utils.data import DataLoader
 import torchvision.transforms.functional as TF
 from torchmetrics import PearsonCorrCoef
 
@@ -314,6 +316,8 @@ class Trainer(object):
 
             # load depth
             depth_paths = [image.replace('_rgba.png', '_depth.png') for image in self.opt.images]
+            if self.opt.perform_classical_training:
+                depth_paths = self.opt.depth_images
             depths = [cv2.imread(depth_path, cv2.IMREAD_UNCHANGED) for depth_path in depth_paths]
             depth = np.stack([cv2.resize(depth, (w, h), interpolation=cv2.INTER_AREA) for depth in depths])
             self.depth = torch.from_numpy(depth.astype(np.float32) / 255).to(self.device)
@@ -369,8 +373,13 @@ class Trainer(object):
         """
 
         # perform RGBD loss instead of SDS if is image-conditioned
-        do_rgbd_loss = self.opt.images is not None and \
-            (self.global_step % self.opt.known_view_interval == 0)
+        do_rgbd_loss = (
+            self.opt.transforms is not None
+            or (
+                self.opt.images is not None
+                and self.global_step % self.opt.known_view_interval == 0
+            )
+        )
 
         # override random camera with fixed known camera
         if do_rgbd_loss:
@@ -411,9 +420,13 @@ class Trainer(object):
         if do_rgbd_loss:
             ambient_ratio = 1.0
             shading = 'lambertian' # use lambertian instead of albedo to get normal
+            if self.opt.perform_classical_training:
+                shading = 'albedo'
             as_latent = False
             binarize = False
             bg_color = torch.rand((B * N, 3), device=rays_o.device)
+            if self.opt.perform_classical_training:
+                bg_color = torch.zeros((B * N, 3)).to(rays_o.device)
 
             # add camera noise to avoid grid-like artifact
             if self.opt.known_view_noise_scale > 0:
@@ -455,7 +468,7 @@ class Trainer(object):
             else:
                 bg_color = torch.rand(3).to(self.device) # single color random bg
 
-        outputs = self.model.render(rays_o, rays_d, mvp, H, W, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, binarize=binarize)
+        outputs = self.model.render(rays_o, rays_d, mvp, H, W, staged=False, perturb=True, bg_color=bg_color, ambient_ratio=ambient_ratio, shading=shading, binarize=binarize) # NOTE: this allocates around 30GB of memory
         pred_depth = outputs['depth'].reshape(B, 1, H, W)
         pred_mask = outputs['weights_sum'].reshape(B, 1, H, W)
         if 'normal_image' in outputs:
@@ -702,7 +715,11 @@ class Trainer(object):
 
     ### ------------------------------
 
-    def train(self, train_loader, valid_loader, test_loader, max_epochs):
+    def train(self,
+              train_loader: DataLoader,
+              valid_loader: Union[DataLoader, None],
+              test_loader: Union[DataLoader, None],
+              max_epochs):
 
         if self.use_tensorboardX and self.local_rank == 0:
             self.writer = tensorboardX.SummaryWriter(os.path.join(self.workspace, "run", self.name))
@@ -719,11 +736,11 @@ class Trainer(object):
             if self.workspace is not None and self.local_rank == 0:
                 self.save_checkpoint(full=True, best=False)
 
-            if self.epoch % self.opt.eval_interval == 0:
+            if valid_loader is not None and self.epoch % self.opt.eval_interval == 0:
                 self.evaluate_one_epoch(valid_loader)
                 self.save_checkpoint(full=False, best=True)
 
-            if self.epoch % self.opt.test_interval == 0 or self.epoch == max_epochs:
+            if test_loader is not None and self.epoch % self.opt.test_interval == 0 or self.epoch == max_epochs:
                 self.test(test_loader)
 
         end_t = time.time()
@@ -965,12 +982,16 @@ class Trainer(object):
                         return grad.clamp(-self.opt.grad_clip_rgb, self.opt.grad_clip_rgb)
                 pred_rgbs.register_hook(_hook)
                 # pred_rgbs.retain_grad()
+            
+            torch.cuda.empty_cache()
 
-            self.scaler.scale(loss).backward()
+            self.scaler.scale(loss).backward() # NOTE: this can allocate up to 10GB of CUDA memory
 
             self.post_train_step()
             self.scaler.step(self.optimizer)
             self.scaler.update()
+
+            torch.cuda.empty_cache()
 
             if self.scheduler_update_every_step:
                 self.lr_scheduler.step()

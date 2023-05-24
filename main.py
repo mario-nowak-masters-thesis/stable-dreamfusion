@@ -2,9 +2,11 @@ import torch
 import argparse
 import pandas as pd
 import sys
+import json
 
-from nerf.provider import NeRFDataset
+from nerf.provider import ClassicNeRFDataset, NeRFDataset
 from nerf.utils import *
+from transforms import Transforms
 
 # torch.autograd.set_detect_anomaly(True)
 
@@ -152,7 +154,8 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_size_valid', type=int, default=8, help="# of frames to render in the turntable video in validation")
     parser.add_argument('--dataset_size_test', type=int, default=100, help="# of frames to render in the turntable video at test time")
 
-    parser.add_argument('--trajectory_json', default=None, help="image config csv")
+    # 
+    parser.add_argument('--transforms_json', default=None, help="JSON file containing the transforms information with a format compatible with Nerfstudio")
 
     opt = parser.parse_args()
 
@@ -174,8 +177,21 @@ if __name__ == '__main__':
     opt.images, opt.ref_radii, opt.ref_polars, opt.ref_azimuths, opt.zero123_ws = [], [], [], [], []
     opt.default_zero123_w = 1
 
+    opt.transforms = None
+    if opt.transforms_json is not None:
+        opt.perform_classical_training = True
+        opt.known_view_noise_scale = 0
+        opt.known_view_scale = 1
+        with open(opt.transforms_json, "r") as transforms_json:
+            transforms_directory = os.path.dirname(opt.transforms_json)
+            opt.transforms = Transforms(json.load(transforms_json))
+            opt.images = [os.path.join(transforms_directory, frame.file_path) for frame in opt.transforms.frames]
+            opt.depth_images = [os.path.join(transforms_directory, frame.depth_file_path) for frame in opt.transforms.frames]
+        opt.w = opt.transforms.width
+        opt.h = opt.transforms.height
+        
     # parameters for image-conditioned generation
-    if opt.image is not None or opt.image_config is not None:
+    elif opt.image is not None or opt.image_config is not None:
 
         if opt.text is None:
             # use zero123 guidance model when only providing image
@@ -340,7 +356,10 @@ if __name__ == '__main__':
 
     else:
 
-        train_loader = NeRFDataset(opt, device=device, type='train', H=opt.h, W=opt.w, size=opt.dataset_size_train * opt.batch_size).dataloader()
+        if opt.transforms is not None:
+            train_loader = ClassicNeRFDataset(opt, device, opt.transforms, type='train').dataloader()
+        else:
+            train_loader = NeRFDataset(opt, device=device, type='train', H=opt.h, W=opt.w, size=opt.dataset_size_train * opt.batch_size).dataloader()
 
         if opt.optim == 'adan':
             from optimizer import Adan
@@ -383,8 +402,13 @@ if __name__ == '__main__':
             gui.render()
 
         else:
-            valid_loader = NeRFDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=opt.dataset_size_valid).dataloader(batch_size=1)
-            test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
+            if opt.transforms is not None:
+                valid_loader = None
+                test_loader = None
+            else:
+                valid_loader = NeRFDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=opt.dataset_size_valid).dataloader(batch_size=1)
+                test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
+            
 
             max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
             trainer.train(train_loader, valid_loader, test_loader, max_epoch)
