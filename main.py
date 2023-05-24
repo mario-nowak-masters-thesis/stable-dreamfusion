@@ -358,7 +358,7 @@ if __name__ == '__main__':
 
         else:
             if opt.camera_path is not None:
-                train_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path).dataloader(batch_size=1)
+                test_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path).dataloader(batch_size=1)
             else:
                 test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
             trainer.test(test_loader)
