@@ -348,7 +348,10 @@ if __name__ == '__main__':
             gui.render()
 
         else:
-            test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
+            if opt.transforms is not None:
+                test_loader = ClassicNeRFDataset(opt, device, opt.transforms, type='test').dataloader(batch_size=1)
+            else:
+                test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
             trainer.test(test_loader)
 
             if opt.save_mesh:
