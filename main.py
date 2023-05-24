@@ -181,7 +181,7 @@ if __name__ == '__main__':
     if opt.transforms_json is not None:
         opt.perform_classical_training = True
         opt.known_view_noise_scale = 0
-        opt.known_view_scale = 1
+        opt.known_view_scale = 0.5
         with open(opt.transforms_json, "r") as transforms_json:
             transforms_directory = os.path.dirname(opt.transforms_json)
             opt.transforms = Transforms(json.load(transforms_json))

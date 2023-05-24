@@ -344,8 +344,8 @@ class ClassicNeRFDataset:
 
     def get_default_view_data(self):
 
-        height = self.transforms.height
-        width = self.transforms.width
+        height = int(self.opt.known_view_scale * self.transforms.height)
+        width = int(self.opt.known_view_scale * self.transforms.width)
         focal_length_x = self.transforms.focal_length_x
         focal_length_y = self.transforms.focal_length_y
         principal_point_x = self.transforms.principal_point_x
