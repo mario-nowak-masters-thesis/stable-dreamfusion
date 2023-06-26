@@ -181,17 +181,16 @@ if __name__ == '__main__':
 
     opt.transforms = None
     opt.camera_path = None
+
+    if opt.camera_path_json is not None:
+        with open(opt.camera_path_json, "r") as camera_path_json:
+            opt.camera_path = CameraPath(json.load(camera_path_json))
+
     
     if opt.transforms_json is not None:
         opt.perform_classical_training = True
         opt.known_view_noise_scale = 0
         opt.known_view_scale = 0.5
-
-    elif opt.camera_path_json is not None:
-        with open(opt.camera_path_json, "r") as camera_path_json:
-            opt.camera_path = CameraPath(json.load(camera_path_json))
-        opt.w = opt.camera_path.render_width
-        opt.h = opt.camera_path.render_height
         
     # parameters for image-conditioned generation
     elif opt.image is not None or opt.image_config is not None:
@@ -411,10 +410,11 @@ if __name__ == '__main__':
             if opt.perform_classical_training:
                 valid_loader = None
                 test_loader = None
+                if opt.camera_path is not None:
+                    test_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path).dataloader(batch_size=1)
             else:
                 valid_loader = NeRFDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=opt.dataset_size_valid).dataloader(batch_size=1)
                 test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
-            
 
             max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
             trainer.train(train_loader, valid_loader, test_loader, max_epoch)
