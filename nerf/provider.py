@@ -6,6 +6,7 @@ import tqdm
 import random
 import numpy as np
 from scipy.spatial.transform import Slerp, Rotation
+from einops import (rearrange, reduce, repeat)
 
 import trimesh
 
@@ -15,7 +16,7 @@ from torch.utils.data import DataLoader
 
 from camera_path import CameraPath
 
-from .utils import get_rays, safe_normalize
+from .utils import get_rays, get_variable_resolution_rays, safe_normalize
 from transforms import Transforms
 
 DIR_COLORS = np.array([
@@ -324,8 +325,8 @@ class NeRFDataset:
         return loader
 
 
-class ClassicNeRFDataset:
-    def __init__(self, opt, device, transforms: Transforms, type='train'):
+class ClassicNeRFDataset(torch.utils.data.Dataset):
+    def __init__(self, opt, device, transforms_json_path: str, type='train'):
         super().__init__()
 
         self.opt = opt
@@ -337,17 +338,37 @@ class ClassicNeRFDataset:
         self.near = self.opt.min_near
         self.far = 1000 # infinite
 
-        self.transforms = transforms
-        self.size = len(transforms.frames)
+        with open(transforms_json_path, "r") as transforms_json:
+            transforms_directory = os.path.dirname(transforms_json_path)
+            self.transforms = Transforms(json.load(transforms_json))
+            self.image_paths = [os.path.join(transforms_directory, frame.file_path) for frame in self.transforms.frames]
+            self.depth_paths = [os.path.join(transforms_directory, frame.depth_file_path) for frame in self.transforms.frames]
+
+        self.size = len(self.transforms.frames)
+
+        images = [cv2.cvtColor(cv2.imread(image_path, cv2.IMREAD_UNCHANGED), cv2.COLOR_BGRA2RGBA) for image_path in self.image_paths]
+        rgba = np.stack([image.astype(np.float32) / 255 for image in images])
+        rgb = rgba[..., :3] * rgba[..., 3:] + (1 - rgba[..., 3:])
+        self.rgb = torch.from_numpy(rgb).permute(0,3,1,2).contiguous().to(self.device)
+        self.mask = torch.from_numpy(rgba[..., 3] > 0.5).to(self.device)
+
+        depths = [np.load(depth_path) for depth_path in self.depth_paths]
+        depth = np.stack(depths)
+        self.depth = torch.from_numpy(depth).to(self.device)
 
         # [debug] visualize poses
         # poses, dirs, _, _, _ = rand_poses(100, self.device, opt, radius_range=self.opt.radius_range, angle_overhead=self.opt.angle_overhead, angle_front=self.opt.angle_front, jitter=self.opt.jitter_pose, uniform_sphere_rate=1)
         # visualize_poses(poses.detach().cpu().numpy(), dirs.detach().cpu().numpy())
 
     def get_default_view_data(self):
+        return self.__getitem__(0)
+    
+    def __getitem__(self, index: int):
+        source_image_height = int(self.transforms.height)
+        source_image_width = int(self.transforms.width)
+        render_image_height = int(self.opt.known_view_scale * self.transforms.height)
+        render_image_width = int(self.opt.known_view_scale * self.transforms.width)
 
-        height = int(self.opt.known_view_scale * self.transforms.height)
-        width = int(self.opt.known_view_scale * self.transforms.width)
         focal_length_x = self.transforms.focal_length_x
         focal_length_y = self.transforms.focal_length_y
         principal_point_x = self.transforms.principal_point_x
@@ -358,8 +379,8 @@ class ClassicNeRFDataset:
 
         projection = torch.tensor(
             [
-                [2*focal_length_x/width, 0, 0, 0],
-                [0, -2*focal_length_y/height, 0, 0],
+                [2*focal_length_x/source_image_width, 0, 0, 0],
+                [0, -2*focal_length_y/source_image_height, 0, 0],
                 [0, 0, -(self.far+self.near)/(self.far-self.near), -(2*self.far*self.near)/(self.far-self.near)],
                 [0, 0, -1, 0]
             ],
@@ -370,30 +391,40 @@ class ClassicNeRFDataset:
         mvp = projection @ torch.inverse(poses) # [B, 4, 4]
 
         # sample a low-resolution but full image
-        rays = get_rays(poses, intrinsics, height, width, -1)
+        number_of_rays = render_image_height * render_image_width
+        rays_o, rays_d, inds = get_variable_resolution_rays(
+            poses,
+            intrinsics,
+            source_image_height,
+            source_image_width,
+            render_image_height,
+            render_image_width
+        )
+
+        rgb = rearrange(self.rgb[index], 'C H W-> (H W) C')[inds[index]].reshape(render_image_height, render_image_width, 3).permute(2, 0, 1).contiguous() # [3, H, W]
+        depth = self.depth[index].flatten()[inds[index]].reshape(1, render_image_height, render_image_width).contiguous() # [1, H, W]
 
         data = {
-            'H': height,
-            'W': width,
-            'rays_o': rays['rays_o'],
-            'rays_d': rays['rays_d'],
-            'dir': None,
-            'mvp': mvp,
-            'polar': self.opt.ref_polars,
-            'azimuth': self.opt.ref_azimuths,
-            'radius': self.opt.ref_radii,
+            'H': render_image_height,
+            'W': render_image_width,
+            'rays_o': rays_o[index], # [N, 3]
+            'rays_d': rays_d[index], # [N, 3]
+            'mvp': mvp[index], # [4, 4]
+            'rgb': rgb,
+            'depth': depth,
         }
 
         return data
 
-    def collate(self, index):
-        return self.get_default_view_data()
-
     def dataloader(self, batch_size=None):
         batch_size = batch_size or self.opt.batch_size
-        loader = DataLoader(list(range(self.size)), batch_size=batch_size, collate_fn=self.collate, shuffle=self.training, num_workers=0)
+        loader = DataLoader(self, batch_size=batch_size, shuffle=self.training, num_workers=0)
         loader._data = self
         return loader
+    
+    def __len__(self):
+        return self.rgb.size(0)
+
 
 class NeRFRenderingDataset:
     def __init__(self, opt, device, camera_path: CameraPath):

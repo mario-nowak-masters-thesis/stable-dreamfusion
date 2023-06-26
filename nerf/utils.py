@@ -66,10 +66,10 @@ def get_rays(poses, intrinsics, H, W, N=-1, error_map=None):
     results = {}
 
     if N > 0:
-        N = min(N, H*W)
+        N = int(min(N, H*W))
 
         if error_map is None:
-            inds = torch.randint(0, H*W, size=[N], device=device) # may duplicate
+            inds = torch.randint(0, H*W, size=(N,), device=device) # may duplicate
             inds = inds.expand([B, N])
         else:
 
@@ -107,6 +107,53 @@ def get_rays(poses, intrinsics, H, W, N=-1, error_map=None):
     results['rays_d'] = rays_d
 
     return results
+
+
+@torch.cuda.amp.autocast(enabled=False)
+def get_variable_resolution_rays(poses, intrinsics, H: int, W: int, render_height: int, render_width: int) -> tuple:
+    ''' get rays
+    Args:
+        poses: [B, 4, 4], cam2world
+        intrinsics: [4]
+        H, W, N: int
+    Returns:
+        rays_o, rays_d: [B, N, 3]
+        inds: [B, N]
+    '''
+
+    device = poses.device
+    B = poses.shape[0]
+    fx, fy, cx, cy = intrinsics
+
+    i, j = custom_meshgrid(torch.linspace(0, W-1, W, device=device), torch.linspace(0, H-1, H, device=device))
+    i = i.t().reshape([1, H*W]).expand([B, H*W]) + 0.5
+    j = j.t().reshape([1, H*W]).expand([B, H*W]) + 0.5
+
+    results = {}
+
+    height_downsample_factor = H // render_height
+    width_downsample_factor = W // render_width
+    inds = (
+        torch.arange(H*W, device=device)
+            .reshape(H, W)[::height_downsample_factor, ::width_downsample_factor]
+            .flatten()
+            .expand([B, render_height * render_width])
+    )
+
+    i = torch.gather(i, -1, inds)
+    j = torch.gather(j, -1, inds)
+
+    zs = - torch.ones_like(i)
+    xs = - (i - cx) / fx * zs
+    ys = (j - cy) / fy * zs
+    directions = torch.stack((xs, ys, zs), dim=-1)
+    # directions = safe_normalize(directions)
+    rays_d = directions @ poses[:, :3, :3].transpose(-1, -2) # (B, N, 3)
+
+    rays_o = poses[..., :3, 3] # [B, 3]
+    rays_o = rays_o[..., None, :].expand_as(rays_d) # [B, N, 3]
+
+    return (rays_o, rays_d, inds)
 
 
 def seed_everything(seed):
@@ -316,8 +363,6 @@ class Trainer(object):
 
             # load depth
             depth_paths = [image.replace('_rgba.png', '_depth.png') for image in self.opt.images]
-            if self.opt.perform_classical_training:
-                depth_paths = self.opt.depth_images
             depths = [cv2.imread(depth_path, cv2.IMREAD_UNCHANGED) for depth_path in depth_paths]
             depth = np.stack([cv2.resize(depth, (w, h), interpolation=cv2.INTER_AREA) for depth in depths])
             self.depth = torch.from_numpy(depth.astype(np.float32) / 255).to(self.device)
@@ -373,12 +418,11 @@ class Trainer(object):
         """
 
         # perform RGBD loss instead of SDS if is image-conditioned
+        perform_classical_training = self.opt.perform_classical_training
         do_rgbd_loss = (
-            self.opt.transforms is not None
-            or (
-                self.opt.images is not None
-                and self.global_step % self.opt.known_view_interval == 0
-            )
+            not perform_classical_training
+            and self.opt.images is not None
+            and self.global_step % self.opt.known_view_interval == 0
         )
 
         # override random camera with fixed known camera
@@ -416,8 +460,14 @@ class Trainer(object):
             rays_o = rays_o[choice]
             rays_d = rays_d[choice]
             mvp = mvp[choice]
-
-        if do_rgbd_loss:
+        
+        if perform_classical_training:
+            ambient_ratio = 1.0
+            shading = 'albedo'
+            as_latent = False
+            binarize = False
+            bg_color = torch.zeros((B * N, 3)).to(rays_o.device)
+        elif do_rgbd_loss:
             ambient_ratio = 1.0
             shading = 'lambertian' # use lambertian instead of albedo to get normal
             if self.opt.perform_classical_training:
@@ -481,7 +531,20 @@ class Trainer(object):
             pred_rgb = outputs['image'].reshape(B, H, W, 3).permute(0, 3, 1, 2).contiguous() # [B, 3, H, W]
 
         # known view loss
-        if do_rgbd_loss:
+        if perform_classical_training:
+            gt_rgb = data['rgb']
+            gt_depth = data['depth']
+            if len(gt_rgb) > self.opt.batch_size:
+                gt_rgb = gt_rgb[choice]
+                gt_depth = gt_depth[choice]
+            
+            # color loss
+            loss = self.opt.lambda_rgb * F.mse_loss(pred_rgb, gt_rgb)
+            
+            # depth loss
+            loss += self.opt.lambda_depth * F.l1_loss(pred_depth, gt_depth)
+
+        elif do_rgbd_loss:
             gt_mask = self.mask # [B, H, W]
             gt_rgb = self.rgb   # [B, 3, H, W]
             gt_normal = self.normal # [B, H, W, 3]
@@ -604,7 +667,7 @@ class Trainer(object):
                 loss_opacity = (outputs['weights_sum'] ** 2).mean()
                 loss = loss + self.opt.lambda_opacity * loss_opacity
 
-            if self.opt.lambda_entropy > 0:
+            if self.opt.lambda_entropy > 0: # ? NOTE: Do I need this?
                 alphas = outputs['weights'].clamp(1e-5, 1 - 1e-5)
                 # alphas = alphas ** 2 # skewed entropy, favors 0 over 1
                 loss_entropy = (- alphas * torch.log2(alphas) - (1 - alphas) * torch.log2(1 - alphas)).mean()
@@ -740,7 +803,7 @@ class Trainer(object):
                 self.evaluate_one_epoch(valid_loader)
                 self.save_checkpoint(full=False, best=True)
 
-            if test_loader is not None and self.epoch % self.opt.test_interval == 0 or self.epoch == max_epochs:
+            if test_loader is not None and (self.epoch % self.opt.test_interval == 0 or self.epoch == max_epochs):
                 self.test(test_loader)
 
         end_t = time.time()

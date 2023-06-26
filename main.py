@@ -180,20 +180,14 @@ if __name__ == '__main__':
     opt.default_zero123_w = 1
 
     opt.transforms = None
+    opt.camera_path = None
+    
     if opt.transforms_json is not None:
         opt.perform_classical_training = True
         opt.known_view_noise_scale = 0
         opt.known_view_scale = 0.5
-        with open(opt.transforms_json, "r") as transforms_json:
-            transforms_directory = os.path.dirname(opt.transforms_json)
-            opt.transforms = Transforms(json.load(transforms_json))
-            opt.images = [os.path.join(transforms_directory, frame.file_path) for frame in opt.transforms.frames]
-            opt.depth_images = [os.path.join(transforms_directory, frame.depth_file_path) for frame in opt.transforms.frames]
-        opt.w = opt.transforms.width
-        opt.h = opt.transforms.height
 
-    opt.camera_path = None
-    if opt.camera_path_json is not None:
+    elif opt.camera_path_json is not None:
         with open(opt.camera_path_json, "r") as camera_path_json:
             opt.camera_path = CameraPath(json.load(camera_path_json))
         opt.w = opt.camera_path.render_width
@@ -368,8 +362,8 @@ if __name__ == '__main__':
 
     else:
 
-        if opt.transforms is not None:
-            train_loader = ClassicNeRFDataset(opt, device, opt.transforms, type='train').dataloader()
+        if opt.perform_classical_training:
+            train_loader = ClassicNeRFDataset(opt, device, opt.transforms_json, type='train').dataloader()
         else:
             train_loader = NeRFDataset(opt, device=device, type='train', H=opt.h, W=opt.w, size=opt.dataset_size_train * opt.batch_size).dataloader()
 
@@ -414,7 +408,7 @@ if __name__ == '__main__':
             gui.render()
 
         else:
-            if opt.transforms is not None:
+            if opt.perform_classical_training:
                 valid_loader = None
                 test_loader = None
             else:
