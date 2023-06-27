@@ -190,7 +190,6 @@ if __name__ == '__main__':
     if opt.transforms_json is not None:
         opt.perform_classical_training = True
         opt.known_view_noise_scale = 0
-        opt.known_view_scale = 0.5
         
     # parameters for image-conditioned generation
     elif opt.image is not None or opt.image_config is not None:
