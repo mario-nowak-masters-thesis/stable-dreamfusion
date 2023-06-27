@@ -729,7 +729,7 @@ class NeRFRenderer(nn.Module):
         results = {}
 
         if self.training:
-            xyzs, dirs, ts, rays = raymarching.march_rays_train(rays_o, rays_d, self.bound, self.density_bitfield, self.cascade, self.grid_size, nears, fars, perturb, self.opt.dt_gamma, self.opt.max_steps)
+            xyzs, dirs, ts, rays = raymarching.march_rays_train(rays_o, rays_d, self.bound, self.density_bitfield, self.cascade, self.grid_size, nears, fars, perturb, self.opt.dt_gamma, self.opt.max_steps) # NOTE: this allocates around 2GB of cuda memory
             dirs = safe_normalize(dirs)
 
             if light_d.shape[0] > 1:

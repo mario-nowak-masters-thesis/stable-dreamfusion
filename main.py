@@ -2,9 +2,12 @@ import torch
 import argparse
 import pandas as pd
 import sys
+import json
+from camera_path import CameraPath
 
-from nerf.provider import NeRFDataset
+from nerf.provider import ClassicNeRFDataset, NeRFDataset, NeRFRenderingDataset
 from nerf.utils import *
+from transforms import Transforms
 
 # torch.autograd.set_detect_anomaly(True)
 
@@ -152,6 +155,10 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_size_valid', type=int, default=8, help="# of frames to render in the turntable video in validation")
     parser.add_argument('--dataset_size_test', type=int, default=100, help="# of frames to render in the turntable video at test time")
 
+    # 
+    parser.add_argument('--transforms_json', default=None, help="JSON file containing the transforms information with a format compatible with Nerfstudio")
+    parser.add_argument('--camera_path_json', default=None, help="JSON file containing the camera path used to render a video of a NeRF after training compatible with Nerfstudio")
+
     opt = parser.parse_args()
 
     if opt.O:
@@ -172,8 +179,20 @@ if __name__ == '__main__':
     opt.images, opt.ref_radii, opt.ref_polars, opt.ref_azimuths, opt.zero123_ws = [], [], [], [], []
     opt.default_zero123_w = 1
 
+    opt.transforms = None
+    opt.camera_path = None
+
+    if opt.camera_path_json is not None:
+        with open(opt.camera_path_json, "r") as camera_path_json:
+            opt.camera_path = CameraPath(json.load(camera_path_json))
+
+    
+    if opt.transforms_json is not None:
+        opt.perform_classical_training = True
+        opt.known_view_noise_scale = 0
+        
     # parameters for image-conditioned generation
-    if opt.image is not None or opt.image_config is not None:
+    elif opt.image is not None or opt.image_config is not None:
 
         if opt.text is None:
             # use zero123 guidance model when only providing image
@@ -330,7 +349,10 @@ if __name__ == '__main__':
             gui.render()
 
         else:
-            test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
+            if opt.camera_path is not None:
+                test_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path).dataloader(batch_size=1)
+            else:
+                test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
             trainer.test(test_loader)
 
             if opt.save_mesh:
@@ -338,7 +360,10 @@ if __name__ == '__main__':
 
     else:
 
-        train_loader = NeRFDataset(opt, device=device, type='train', H=opt.h, W=opt.w, size=opt.dataset_size_train * opt.batch_size).dataloader()
+        if opt.perform_classical_training:
+            train_loader = ClassicNeRFDataset(opt, device, opt.transforms_json, type='train').dataloader()
+        else:
+            train_loader = NeRFDataset(opt, device=device, type='train', H=opt.h, W=opt.w, size=opt.dataset_size_train * opt.batch_size).dataloader()
 
         if opt.optim == 'adan':
             from optimizer import Adan
@@ -381,8 +406,14 @@ if __name__ == '__main__':
             gui.render()
 
         else:
-            valid_loader = NeRFDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=opt.dataset_size_valid).dataloader(batch_size=1)
-            test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
+            if opt.perform_classical_training:
+                valid_loader = None
+                test_loader = None
+                if opt.camera_path is not None:
+                    test_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path).dataloader(batch_size=1)
+            else:
+                valid_loader = NeRFDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=opt.dataset_size_valid).dataloader(batch_size=1)
+                test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
 
             max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
             trainer.train(train_loader, valid_loader, test_loader, max_epoch)
