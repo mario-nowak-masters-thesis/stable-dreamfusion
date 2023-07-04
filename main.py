@@ -155,9 +155,11 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_size_valid', type=int, default=8, help="# of frames to render in the turntable video in validation")
     parser.add_argument('--dataset_size_test', type=int, default=100, help="# of frames to render in the turntable video at test time")
 
-    # 
+    # Custom parameters
     parser.add_argument('--transforms_json', default=None, help="JSON file containing the transforms information with a format compatible with Nerfstudio")
     parser.add_argument('--camera_path_json', default=None, help="JSON file containing the camera path used to render a video of a NeRF after training compatible with Nerfstudio")
+    parser.add_argument('--perform_SDS_on_pretrained', action='store_true', help="perform SDS loss training on a pre-trained NeRF")
+    parser.add_argument('--shuffle_camera_path_dataset', action='store_true', help="whether to shuffle the dataset while performing SDS loss")
 
     opt = parser.parse_args()
 
@@ -180,16 +182,17 @@ if __name__ == '__main__':
     opt.default_zero123_w = 1
 
     opt.transforms = None
+    opt.perform_classical_training = False
     opt.camera_path = None
 
     if opt.camera_path_json is not None:
         with open(opt.camera_path_json, "r") as camera_path_json:
             opt.camera_path = CameraPath(json.load(camera_path_json))
 
-    
     if opt.transforms_json is not None:
         opt.perform_classical_training = True
         opt.known_view_noise_scale = 0
+        opt.guidance = []
         
     # parameters for image-conditioned generation
     elif opt.image is not None or opt.image_config is not None:
@@ -362,6 +365,8 @@ if __name__ == '__main__':
 
         if opt.perform_classical_training:
             train_loader = ClassicNeRFDataset(opt, device, opt.transforms_json, type='train').dataloader()
+        elif opt.perform_SDS_on_pretrained:
+            train_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path, shuffle=opt.shuffle_camera_path_dataset).dataloader()
         else:
             train_loader = NeRFDataset(opt, device=device, type='train', H=opt.h, W=opt.w, size=opt.dataset_size_train * opt.batch_size).dataloader()
 
@@ -411,11 +416,16 @@ if __name__ == '__main__':
                 test_loader = None
                 if opt.camera_path is not None:
                     test_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path).dataloader(batch_size=1)
+            elif opt.perform_SDS_on_pretrained:
+                valid_loader = None
+                test_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path, shuffle=False).dataloader(batch_size=1)
             else:
                 valid_loader = NeRFDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=opt.dataset_size_valid).dataloader(batch_size=1)
                 test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
 
             max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
+            if opt.perform_SDS_on_pretrained:
+                max_epoch = np.ceil(trainer.epoch + (opt.iters / len(train_loader))).astype(np.int32)
             trainer.train(train_loader, valid_loader, test_loader, max_epoch)
 
             if opt.save_mesh:

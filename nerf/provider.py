@@ -427,7 +427,7 @@ class ClassicNeRFDataset(torch.utils.data.Dataset):
 
 
 class NeRFRenderingDataset:
-    def __init__(self, opt, device, camera_path: CameraPath):
+    def __init__(self, opt, device, camera_path: CameraPath, shuffle=False):
         super().__init__()
 
         self.opt = opt
@@ -445,6 +445,7 @@ class NeRFRenderingDataset:
 
         self.near = self.opt.min_near
         self.far = 1000 # infinite
+        self.shuffle = shuffle
 
     def collate(self, index: list[int]):
         fov = self.camera_path[index[0]].field_of_view
@@ -478,6 +479,9 @@ class NeRFRenderingDataset:
 
     def dataloader(self, batch_size=1):
         batch_size = batch_size or self.opt.batch_size
-        loader = DataLoader(list(range(self.size)), batch_size=batch_size, collate_fn=self.collate, shuffle=False, num_workers=0)
+        loader = DataLoader(list(range(self.size)), batch_size=batch_size, collate_fn=self.collate, shuffle=self.shuffle, num_workers=0)
         loader._data = self
         return loader
+    
+    def get_default_view_data(self):
+        return None
