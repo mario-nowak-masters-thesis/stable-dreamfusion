@@ -160,6 +160,7 @@ if __name__ == '__main__':
     parser.add_argument('--camera_path_json', default=None, help="JSON file containing the camera path used to render a video of a NeRF after training compatible with Nerfstudio")
     parser.add_argument('--perform_SDS_on_pretrained', action='store_true', help="perform SDS loss training on a pre-trained NeRF")
     parser.add_argument('--shuffle_camera_path_dataset', action='store_true', help="whether to shuffle the dataset while performing SDS loss")
+    parser.add_argument('--black_background', action='store_true', help="whether to use a random or black background")
 
     opt = parser.parse_args()
 

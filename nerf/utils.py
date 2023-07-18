@@ -467,7 +467,9 @@ class Trainer(object):
             shading = 'albedo'
             as_latent = False
             binarize = False
-            bg_color = torch.zeros((B * N, 3)).to(rays_o.device)
+            bg_color = torch.rand((B * N, 3), device=rays_o.device)
+            if self.opt.black_background:
+                bg_color = torch.zeros((B * N, 3)).to(rays_o.device)
         elif do_rgbd_loss:
             ambient_ratio = 1.0
             shading = 'lambertian' # use lambertian instead of albedo to get normal
@@ -763,6 +765,8 @@ class Trainer(object):
         B, N = rays_o.shape[:2]
         H, W = data['H'], data['W']
 
+        if self.opt.black_background:
+            bg_color = torch.zeros((B * N, 3)).to(rays_o.device)
         if bg_color is not None:
             bg_color = bg_color.to(rays_o.device)
 
