@@ -418,6 +418,7 @@ class Trainer(object):
         """
 
         # perform RGBD loss instead of SDS if is image-conditioned
+        perform_SDS_on_pretrained = self.opt.perform_SDS_on_pretrained
         perform_classical_training = self.opt.perform_classical_training
         do_rgbd_loss = (
             not perform_classical_training
@@ -461,12 +462,14 @@ class Trainer(object):
             rays_d = rays_d[choice]
             mvp = mvp[choice]
         
-        if perform_classical_training:
+        if perform_SDS_on_pretrained or perform_classical_training:
             ambient_ratio = 1.0
             shading = 'albedo'
             as_latent = False
             binarize = False
-            bg_color = torch.zeros((B * N, 3)).to(rays_o.device)
+            bg_color = torch.rand((B * N, 3), device=rays_o.device)
+            if self.opt.black_background:
+                bg_color = torch.zeros((B * N, 3)).to(rays_o.device)
         elif do_rgbd_loss:
             ambient_ratio = 1.0
             shading = 'lambertian' # use lambertian instead of albedo to get normal
@@ -585,6 +588,19 @@ class Trainer(object):
                 #     valid_gt_depth = A @ X # [B, 1]
                 # lambda_depth = self.opt.lambda_depth #* min(1, self.global_step / self.opt.iters)
                 # loss = loss + lambda_depth * F.mse_loss(valid_pred_depth, valid_gt_depth)
+
+        elif perform_SDS_on_pretrained:
+
+            loss = 0
+
+            if 'SD' in self.guidance:
+
+                conditionless_text_embeddings = self.embeddings['SD']['uncond']
+                conditioning_text_embeddings = self.embeddings['SD']['default']
+                text_z = torch.cat([conditionless_text_embeddings, conditioning_text_embeddings], dim=0)
+                
+                loss = loss + self.guidance['SD'].train_step(text_z, pred_rgb, as_latent=as_latent, guidance_scale=self.opt.guidance_scale, grad_scale=self.opt.lambda_guidance,
+                                                             save_guidance_path=save_guidance_path)
 
         # novel view loss (SDS loss)
         else:
@@ -749,6 +765,8 @@ class Trainer(object):
         B, N = rays_o.shape[:2]
         H, W = data['H'], data['W']
 
+        if self.opt.black_background:
+            bg_color = torch.zeros((B * N, 3)).to(rays_o.device)
         if bg_color is not None:
             bg_color = bg_color.to(rays_o.device)
 
