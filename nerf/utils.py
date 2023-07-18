@@ -346,6 +346,10 @@ class Trainer(object):
 
             if 'clip' in self.guidance:
                 self.embeddings['clip']['text'] = self.guidance['clip'].get_text_embeds(self.opt.text)
+            
+            if 'VSD' in self.guidance:
+                self.embeddings['VSD']['default'] = self.guidance['VSD'].get_text_embeds([self.opt.text])
+                self.embeddings['VSD']['uncond'] = self.guidance['VSD'].get_text_embeds([self.opt.negative])
 
         if self.opt.images is not None:
             # NOTE: load training images here
@@ -418,6 +422,7 @@ class Trainer(object):
         """
 
         # perform RGBD loss instead of SDS if is image-conditioned
+        perform_VSD_on_pretrained = self.opt.perform_VSD_on_pretrained
         perform_SDS_on_pretrained = self.opt.perform_SDS_on_pretrained
         perform_classical_training = self.opt.perform_classical_training
         do_rgbd_loss = (
@@ -462,7 +467,7 @@ class Trainer(object):
             rays_d = rays_d[choice]
             mvp = mvp[choice]
         
-        if perform_SDS_on_pretrained or perform_classical_training:
+        if perform_VSD_on_pretrained or perform_SDS_on_pretrained or perform_classical_training:
             ambient_ratio = 1.0
             shading = 'albedo'
             as_latent = False
@@ -601,6 +606,30 @@ class Trainer(object):
                 
                 loss = loss + self.guidance['SD'].train_step(text_z, pred_rgb, as_latent=as_latent, guidance_scale=self.opt.guidance_scale, grad_scale=self.opt.lambda_guidance,
                                                              save_guidance_path=save_guidance_path)
+        
+        elif perform_VSD_on_pretrained:
+
+            loss = 0
+            if 'VSD' in self.guidance:
+                camera_extrinsics = data['camera_extrinsics']
+                conditionless_text_embeddings = self.embeddings['VSD']['uncond']
+                conditioning_text_embeddings = self.embeddings['VSD']['default']
+                # NOTE: IMPORTANT: the order of conditioned and undconditioned is reversed here!!!
+                text_z = torch.cat([conditioning_text_embeddings, conditionless_text_embeddings], dim=0)
+                
+                guidance_out = self.guidance['VSD'].train_step(
+                    text_z,
+                    pred_rgb,
+                    camera_extrinsics=camera_extrinsics,
+                    as_latent=as_latent,
+                    guidance_scale=self.opt.guidance_scale,
+                    grad_scale=self.opt.lambda_guidance,
+                    save_guidance_path=save_guidance_path,
+                )
+                loss_vsd = guidance_out['loss_vsd']
+                loss_lora = guidance_out['loss_lora']
+
+                loss += self.opt.lamdba_vsd * loss_vsd + self.opt.lamdba_lora * loss_lora
 
         # novel view loss (SDS loss)
         else:

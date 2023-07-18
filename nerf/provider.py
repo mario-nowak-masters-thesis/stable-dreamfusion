@@ -453,7 +453,7 @@ class NeRFRenderingDataset:
         focal = self.H / (2 * np.tan(np.deg2rad(fov) / 2))
         intrinsics = np.array([focal, focal, self.cx, self.cy])
 
-        poses = torch.stack([self.camera_path[i].camera_extrinsics for i in index]).to(self.device)
+        camera_extrinsics = torch.stack([self.camera_path[i].camera_extrinsics for i in index]).to(self.device)
 
         projection = torch.tensor([
             [2*focal/self.W, 0, 0, 0],
@@ -462,10 +462,10 @@ class NeRFRenderingDataset:
             [0, 0, -1, 0]
         ], dtype=torch.float32, device=self.device).unsqueeze(0)
 
-        mvp = projection @ torch.inverse(poses) # [1, 4, 4]
+        mvp = projection @ torch.inverse(camera_extrinsics) # [1, 4, 4]
 
         # sample a low-resolution but full image
-        rays = get_rays(poses, intrinsics, self.H, self.W, -1)
+        rays = get_rays(camera_extrinsics, intrinsics, self.H, self.W, -1)
 
         data = {
             'H': self.H,
@@ -473,6 +473,7 @@ class NeRFRenderingDataset:
             'rays_o': rays['rays_o'],
             'rays_d': rays['rays_d'],
             'mvp': mvp,
+            'camera_extrinsics': camera_extrinsics
         }
 
         return data

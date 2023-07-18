@@ -223,7 +223,7 @@ class NeRFNetwork(NeRFRenderer):
         return rgbs
 
     # optimizer utils
-    def get_params(self, lr):
+    def get_params(self, lr) -> list[dict]:
 
         params = [
             # {'params': self.encoder.parameters(), 'lr': lr * 10},
