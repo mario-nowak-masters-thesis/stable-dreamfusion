@@ -170,6 +170,8 @@ if __name__ == '__main__':
     if opt.O:
         opt.fp16 = True
         opt.cuda_ray = True
+        if opt.perform_VSD_on_pretrained:
+            opt.fp16 = False
 
     elif opt.O2:
         opt.fp16 = True

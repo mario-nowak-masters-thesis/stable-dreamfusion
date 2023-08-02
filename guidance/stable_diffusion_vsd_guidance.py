@@ -198,13 +198,21 @@ class StableDiffusionVSDGuidance(nn.Module):
     
     def compute_grad_vsd(self,
                         text_embeddings, # ["BB 77 768"]
-                        latents, # [B 4 64 64]
+                        pred_rgb, # [B 4 64 64]
                         camera_condition, # [B, 4, 4]
                         guidance_scale=7.5,
                         guidance_scale_lora=1.0,
                         save_guidance_path:Path=None,
                         as_latent=False
                         ):
+        
+        if as_latent:
+            latents = F.interpolate(pred_rgb, (64, 64), mode='bilinear', align_corners=False) * 2 - 1
+        else:
+            # interp to 512x512 to be fed into vae.
+            pred_rgb_512 = F.interpolate(pred_rgb, (512, 512), mode='bilinear', align_corners=False)
+            # encode image into latents with vae, requires grad!
+            latents = self.encode_imgs(pred_rgb_512)
 
         B = latents.shape[0]
         # timestep ~ U(0.02, 0.98) to avoid very high/low noise level
@@ -299,7 +307,7 @@ class StableDiffusionVSDGuidance(nn.Module):
                 viz_images = torch.cat([pred_rgb_512, result_noisier_image, result_hopefully_less_noisy_image],dim=0)
                 save_image(viz_images, save_guidance_path)
 
-        return grad
+        return grad, latents
 
 
     def train_step(self, text_embeddings, pred_rgb, camera_extrinsics, guidance_scale=100, as_latent=False, grad_scale=1,
@@ -307,20 +315,14 @@ class StableDiffusionVSDGuidance(nn.Module):
 
         batch_size = pred_rgb.shape[0]
 
-        if as_latent:
-            latents = F.interpolate(pred_rgb, (64, 64), mode='bilinear', align_corners=False) * 2 - 1
-        else:
-            # interp to 512x512 to be fed into vae.
-            pred_rgb_512 = F.interpolate(pred_rgb, (512, 512), mode='bilinear', align_corners=False)
-            # encode image into latents with vae, requires grad!
-            latents = self.encode_imgs(pred_rgb_512)
+        
         
         camera_condition = camera_extrinsics
 
         # TODO: add camera condition
-        grad = self.compute_grad_vsd(
+        grad, latents = self.compute_grad_vsd(
             text_embeddings,
-            latents,
+            pred_rgb,
             guidance_scale=guidance_scale,
             camera_condition=camera_condition,
             save_guidance_path=save_guidance_path,

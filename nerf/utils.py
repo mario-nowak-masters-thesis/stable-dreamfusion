@@ -629,7 +629,7 @@ class Trainer(object):
                 loss_vsd = guidance_out['loss_vsd']
                 loss_lora = guidance_out['loss_lora']
 
-                loss += self.opt.lamdba_vsd * loss_vsd + self.opt.lamdba_lora * loss_lora
+                loss += self.opt.lambda_vsd * loss_vsd + self.opt.lambda_lora * loss_lora
 
         # novel view loss (SDS loss)
         else:
@@ -1093,6 +1093,7 @@ class Trainer(object):
                 pred_rgbs.register_hook(_hook)
                 # pred_rgbs.retain_grad()
             
+            torch.cuda.empty_cache()
             torch.cuda.empty_cache()
 
             self.scaler.scale(loss).backward() # NOTE: this can allocate up to 10GB of CUDA memory
