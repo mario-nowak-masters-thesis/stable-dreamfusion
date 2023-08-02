@@ -161,12 +161,17 @@ if __name__ == '__main__':
     parser.add_argument('--perform_SDS_on_pretrained', action='store_true', help="perform SDS loss training on a pre-trained NeRF")
     parser.add_argument('--shuffle_camera_path_dataset', action='store_true', help="whether to shuffle the dataset while performing SDS loss")
     parser.add_argument('--black_background', action='store_true', help="whether to use a random or black background")
+    parser.add_argument('--perform_VSD_on_pretrained', action='store_true', help="perform SDS loss training on a pre-trained NeRF")
+    parser.add_argument('--lambda_vsd', type=float, default=1, help="loss scale for VSD")
+    parser.add_argument('--lambda_lora', type=float, default=1, help="loss scale for LoRA")
 
     opt = parser.parse_args()
 
     if opt.O:
         opt.fp16 = True
         opt.cuda_ray = True
+        if opt.perform_VSD_on_pretrained:
+            opt.fp16 = False
 
     elif opt.O2:
         opt.fp16 = True
@@ -178,6 +183,11 @@ if __name__ == '__main__':
             opt.guidance.remove('SD')
             opt.guidance.append('IF')
         opt.latent_iter_ratio = 0 # must not do as_latent
+    
+    if opt.perform_VSD_on_pretrained:
+        if 'SD' in opt.guidance:
+            opt.guidance.remove('SD')
+            opt.guidance.append('VSD')
 
     opt.images, opt.ref_radii, opt.ref_polars, opt.ref_azimuths, opt.zero123_ws = [], [], [], [], []
     opt.default_zero123_w = 1
@@ -366,24 +376,12 @@ if __name__ == '__main__':
 
         if opt.perform_classical_training:
             train_loader = ClassicNeRFDataset(opt, device, opt.transforms_json, type='train').dataloader()
-        elif opt.perform_SDS_on_pretrained:
+        elif opt.perform_SDS_on_pretrained or opt.perform_VSD_on_pretrained:
             train_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path, shuffle=opt.shuffle_camera_path_dataset).dataloader()
         else:
             train_loader = NeRFDataset(opt, device=device, type='train', H=opt.h, W=opt.w, size=opt.dataset_size_train * opt.batch_size).dataloader()
 
-        if opt.optim == 'adan':
-            from optimizer import Adan
-            # Adan usually requires a larger LR
-            optimizer = lambda model: Adan(model.get_params(5 * opt.lr), eps=1e-8, weight_decay=2e-5, max_grad_norm=5.0, foreach=False)
-        else: # adam
-            optimizer = lambda model: torch.optim.Adam(model.get_params(opt.lr), betas=(0.9, 0.99), eps=1e-15)
-
-        if opt.backbone == 'vanilla':
-            scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
-        else:
-            scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 1) # fixed
-            # scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
-
+        # Load guidances
         guidance = nn.ModuleDict()
 
         if 'SD' in opt.guidance:
@@ -401,6 +399,34 @@ if __name__ == '__main__':
         if 'clip' in opt.guidance:
             from guidance.clip_utils import CLIP
             guidance['clip'] = CLIP(device)
+        
+        if 'VSD' in opt.guidance:
+            from guidance.stable_diffusion_vsd_guidance import StableDiffusionVSDGuidance
+            guidance['VSD'] = StableDiffusionVSDGuidance(device, opt.fp16, opt.vram_O, opt.sd_version, opt.hf_key, opt.t_range)
+
+        # Load optimizer
+        if opt.optim == 'adan':
+            from optimizer import Adan
+            # Adan usually requires a larger LR
+            optimizer = lambda model: Adan(model.get_params(5 * opt.lr), eps=1e-8, weight_decay=2e-5, max_grad_norm=5.0, foreach=False)
+            if 'VSD' in guidance:
+                # include the LoRA parameters in the training
+                def optimizer(model: NeRFNetwork):
+                    parameters = [
+                        *model.get_params(5 * opt.lr),
+                        { "params": guidance['VSD'].parameters(), "lr": 0.0001, "name": "guidance" },
+                    ]
+                    return Adan(parameters, eps=1e-8, weight_decay=2e-5, max_grad_norm=5.0, foreach=False)
+        else: # adam
+            optimizer = lambda model: torch.optim.Adam(model.get_params(opt.lr), betas=(0.9, 0.99), eps=1e-15)
+
+        if opt.backbone == 'vanilla':
+            scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
+        else:
+            scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 1) # fixed
+            # scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
+
+        
 
         trainer = Trainer(' '.join(sys.argv), 'df', opt, model, guidance, device=device, workspace=opt.workspace, optimizer=optimizer, ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, use_checkpoint=opt.ckpt, scheduler_update_every_step=True)
 
@@ -417,7 +443,7 @@ if __name__ == '__main__':
                 test_loader = None
                 if opt.camera_path is not None:
                     test_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path).dataloader(batch_size=1)
-            elif opt.perform_SDS_on_pretrained:
+            elif opt.perform_SDS_on_pretrained or opt.perform_VSD_on_pretrained:
                 valid_loader = None
                 test_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path, shuffle=False).dataloader(batch_size=1)
             else:
@@ -425,7 +451,7 @@ if __name__ == '__main__':
                 test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
 
             max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
-            if opt.perform_SDS_on_pretrained:
+            if opt.perform_SDS_on_pretrained or opt.perform_VSD_on_pretrained:
                 max_epoch = np.ceil(trainer.epoch + (opt.iters / len(train_loader))).astype(np.int32)
             trainer.train(train_loader, valid_loader, test_loader, max_epoch)
 
