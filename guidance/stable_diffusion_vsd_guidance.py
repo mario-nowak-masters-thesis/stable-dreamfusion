@@ -174,7 +174,8 @@ class StableDiffusionVSDGuidance(nn.Module):
         self.max_step = int(self.num_train_timesteps * t_range[1])
         self.alphas = self.scheduler.alphas_cumprod.to(self.device) # for convenience
 
-        self.unet_lora.to(device)
+        if not vram_O:
+            self.unet_lora.to(device)
 
         print(f'[INFO] loaded stable diffusion!')
     
@@ -309,14 +310,10 @@ class StableDiffusionVSDGuidance(nn.Module):
 
         return grad, latents
 
-
-    def train_step(self, text_embeddings, pred_rgb, camera_extrinsics, guidance_scale=100, as_latent=False, grad_scale=1,
+    # grad_scale is not used here
+    def train_step(self, text_embeddings, pred_rgb, camera_extrinsics, guidance_scale=7.5, as_latent=False, grad_scale=1,
                    save_guidance_path:Path=None):
-
         batch_size = pred_rgb.shape[0]
-
-        
-        
         camera_condition = camera_extrinsics
 
         # TODO: add camera condition
