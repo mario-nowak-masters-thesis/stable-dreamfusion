@@ -31,3 +31,6 @@ data/corgi*
 data/turtle*
 
 *.png
+
+final_trial/*
+final_trial_2/*

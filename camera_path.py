@@ -22,11 +22,15 @@ class CameraPath:
     render_height: int
     render_width: int
     camera_orientations: list[CameraOrientation]
+    reverted: bool
 
-    def __init__(self, camera_path: dict):
+    def __init__(self, camera_path: dict, reverted=False):
         self.render_height = camera_path['render_height']
         self.render_width = camera_path['render_width']
         self.camera_orientations = [CameraOrientation(camera_orientation) for camera_orientation in camera_path['camera_path']]
+        self.reverted = reverted
+        if self.reverted:
+            self.camera_orientations[::-1]
     
     def __getitem__(self, index: int) -> CameraOrientation:
         return self.camera_orientations[index]
@@ -71,7 +75,7 @@ def generate_camera_path_dictionary_from_transforms(transforms_json_path: str, i
     
 
 if __name__ == "__main__":
-    transforms_path = "/scratch/students/2023-spring-mt-mhnowak/nerfstudio/data/text2room/street-3-npy-depth/transforms.json"
-    camera_path_dictionary = generate_camera_path_dictionary_from_transforms(transforms_path)
-    with open("custom_camera_path.json", "w") as camera_path_json:
+    transforms_path = "/scratch/students/2023-spring-mt-mhnowak/text2room/final_output_2/final_experimenting_trajectory_3/full_trajectory/street_1/no_input_image_file/2023-08-15_10:20:06.348994Z/transforms_short.json"
+    camera_path_dictionary = generate_camera_path_dictionary_from_transforms(transforms_path, interpolation_steps=10)
+    with open("final_3_short_custom_camera_path.json", "w") as camera_path_json:
         json.dump(camera_path_dictionary , camera_path_json) 

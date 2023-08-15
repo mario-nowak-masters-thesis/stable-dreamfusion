@@ -164,6 +164,7 @@ if __name__ == '__main__':
     parser.add_argument('--perform_VSD_on_pretrained', action='store_true', help="perform SDS loss training on a pre-trained NeRF")
     parser.add_argument('--lambda_vsd', type=float, default=1, help="loss scale for VSD")
     parser.add_argument('--lambda_lora', type=float, default=1, help="loss scale for LoRA")
+    parser.add_argument('--reverted_camera_path', action='store_true')
 
     opt = parser.parse_args()
 
@@ -198,7 +199,7 @@ if __name__ == '__main__':
 
     if opt.camera_path_json is not None:
         with open(opt.camera_path_json, "r") as camera_path_json:
-            opt.camera_path = CameraPath(json.load(camera_path_json))
+            opt.camera_path = CameraPath(json.load(camera_path_json), reverted=opt.reverted_camera_path)
 
     if opt.transforms_json is not None:
         opt.perform_classical_training = True
@@ -425,8 +426,6 @@ if __name__ == '__main__':
         else:
             scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 1) # fixed
             # scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
-
-        
 
         trainer = Trainer(' '.join(sys.argv), 'df', opt, model, guidance, device=device, workspace=opt.workspace, optimizer=optimizer, ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, use_checkpoint=opt.ckpt, scheduler_update_every_step=True)
 

@@ -1096,7 +1096,15 @@ class Trainer(object):
             torch.cuda.empty_cache()
             torch.cuda.empty_cache()
 
+            # try:
             self.scaler.scale(loss).backward() # NOTE: this can allocate up to 10GB of CUDA memory
+
+            # except Exception as error:
+            #     print(error)
+            #     self.optimizer.zero_grad()
+            #     torch.cuda.empty_cache()
+            #     continue
+
 
             self.post_train_step()
             self.scaler.step(self.optimizer)
