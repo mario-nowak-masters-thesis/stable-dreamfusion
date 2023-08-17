@@ -158,7 +158,7 @@ class StableDiffusionVSDGuidance(nn.Module):
 
         # NOTE: threestudio uses DDPM here!
         self.scheduler = DDPMScheduler.from_pretrained(model_key, subfolder="scheduler", torch_dtype=self.precision_t)
-        self.scheduler_lora = DDIMScheduler.from_pretrained(
+        self.scheduler_lora = DDPMScheduler.from_pretrained(
             lora_model_key,
             subfolder="scheduler",
             torch_dtype=self.precision_t,

@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 
 from camera_path import CameraPath
 
-from .utils import get_rays, get_variable_resolution_rays, safe_normalize
+from .utils import get_better_variable_resolution_rays, get_rays, get_variable_resolution_rays, safe_normalize
 from transforms import Transforms
 
 DIR_COLORS = np.array([
@@ -440,8 +440,8 @@ class NeRFRenderingDataset:
         self.W = self.camera_path.render_width
         self.size = len(camera_path)
 
-        self.cx = self.H / 2
-        self.cy = self.W / 2
+        self.cx = 512 / 2
+        self.cy = 512 / 2
 
         self.near = self.opt.min_near
         self.far = 1000 # infinite
@@ -465,7 +465,7 @@ class NeRFRenderingDataset:
         mvp = projection @ torch.inverse(camera_extrinsics) # [1, 4, 4]
 
         # sample a low-resolution but full image
-        rays = get_rays(camera_extrinsics, intrinsics, self.H, self.W, -1)
+        rays = get_better_variable_resolution_rays(camera_extrinsics, intrinsics, 512, 512, self.H, self.W)
 
         data = {
             'H': self.H,

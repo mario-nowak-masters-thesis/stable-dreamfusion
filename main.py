@@ -9,6 +9,9 @@ from nerf.provider import ClassicNeRFDataset, NeRFDataset, NeRFRenderingDataset
 from nerf.utils import *
 from transforms import Transforms
 
+import shutil
+import os
+
 # torch.autograd.set_detect_anomaly(True)
 
 if __name__ == '__main__':
@@ -165,8 +168,14 @@ if __name__ == '__main__':
     parser.add_argument('--lambda_vsd', type=float, default=1, help="loss scale for VSD")
     parser.add_argument('--lambda_lora', type=float, default=1, help="loss scale for LoRA")
     parser.add_argument('--reverted_camera_path', action='store_true')
+    parser.add_argument('--max_epoch', type=int, default=-1)
+    parser.add_argument('--test_camera_path_json', default=None)
+    parser.add_argument('--base_workspace', default=None)
+
 
     opt = parser.parse_args()
+    if not os.path.isdir(opt.workspace) and opt.base_workspace != None:
+        shutil.copytree(opt.base_workspace, opt.workspace)
 
     if opt.O:
         opt.fp16 = True
@@ -196,10 +205,16 @@ if __name__ == '__main__':
     opt.transforms = None
     opt.perform_classical_training = False
     opt.camera_path = None
+    opt.test_camera_path = None
 
     if opt.camera_path_json is not None:
         with open(opt.camera_path_json, "r") as camera_path_json:
             opt.camera_path = CameraPath(json.load(camera_path_json), reverted=opt.reverted_camera_path)
+    
+    if opt.test_camera_path_json is not None:
+        with open(opt.test_camera_path_json, "r") as test_camera_path_json:
+            opt.test_camera_path = CameraPath(json.load(test_camera_path_json), reverted=opt.reverted_camera_path)
+
 
     if opt.transforms_json is not None:
         opt.perform_classical_training = True
@@ -442,9 +457,13 @@ if __name__ == '__main__':
                 test_loader = None
                 if opt.camera_path is not None:
                     test_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path).dataloader(batch_size=1)
+                if opt.test_camera_path is not None:
+                    test_loader = NeRFRenderingDataset(opt, device, camera_path=opt.test_camera_path).dataloader(batch_size=1)
             elif opt.perform_SDS_on_pretrained or opt.perform_VSD_on_pretrained:
                 valid_loader = None
                 test_loader = NeRFRenderingDataset(opt, device, camera_path=opt.camera_path, shuffle=False).dataloader(batch_size=1)
+                if opt.test_camera_path is not None:
+                    test_loader = NeRFRenderingDataset(opt, device, camera_path=opt.test_camera_path, shuffle=False).dataloader(batch_size=1)
             else:
                 valid_loader = NeRFDataset(opt, device=device, type='val', H=opt.H, W=opt.W, size=opt.dataset_size_valid).dataloader(batch_size=1)
                 test_loader = NeRFDataset(opt, device=device, type='test', H=opt.H, W=opt.W, size=opt.dataset_size_test).dataloader(batch_size=1)
@@ -452,6 +471,8 @@ if __name__ == '__main__':
             max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
             if opt.perform_SDS_on_pretrained or opt.perform_VSD_on_pretrained:
                 max_epoch = np.ceil(trainer.epoch + (opt.iters / len(train_loader))).astype(np.int32)
+            if opt.max_epoch > 0:
+                max_epoch = opt.max_epoch
             trainer.train(train_loader, valid_loader, test_loader, max_epoch)
 
             if opt.save_mesh:
