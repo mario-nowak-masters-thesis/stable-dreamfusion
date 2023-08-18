@@ -74,7 +74,7 @@ class StableDiffusionVSDGuidance(nn.Module):
         # from threestudio
         lora_model_key = "stabilityai/stable-diffusion-2-1"
 
-        self.precision_t = torch.float16 if fp16 else torch.float32
+        self.precision_t = torch.float32
 
         # Create model
         pipe = StableDiffusionPipeline.from_pretrained(model_key, torch_dtype=self.precision_t).to(device)
@@ -233,19 +233,20 @@ class StableDiffusionVSDGuidance(nn.Module):
                 noise_pred_pretrain = unet(latent_model_input, tt, encoder_hidden_states=text_embeddings).sample
 
             # noise prediction from LoRA
-            noise_pred_est = self.unet_lora(
-                latent_model_input,
-                tt,
-                encoder_hidden_states=text_embeddings,
-                class_labels=torch.cat(
-                    [
-                        camera_condition.view(B, -1),
-                        torch.zeros_like(camera_condition.view(B, -1)),
-                    ],
-                    dim=0,
-                ),
-                cross_attention_kwargs={"scale": 1.0},
-                ).sample
+            with torch.cuda.amp.autocast(enabled=False):
+                noise_pred_est = self.unet_lora(
+                    latent_model_input,
+                    tt,
+                    encoder_hidden_states=text_embeddings,
+                    class_labels=torch.cat(
+                        [
+                            camera_condition.view(B, -1),
+                            torch.zeros_like(camera_condition.view(B, -1)),
+                        ],
+                        dim=0,
+                    ),
+                    cross_attention_kwargs={"scale": 1.0},
+                    ).sample
 
             # NOTE: this was used previously
             # perform guidance (high scale from paper!)
@@ -370,17 +371,18 @@ class StableDiffusionVSDGuidance(nn.Module):
         text_embeddings, _ = text_embeddings.chunk(2)
         if lora_cfg_training and random.random() < 0.1:
             camera_condition = torch.zeros_like(camera_condition)
-        noise_pred = self.unet_lora(
-                noisy_latents,
-                t,
-                encoder_hidden_states=text_embeddings.repeat(
-                    lora_n_timestamp_samples, 1, 1
-                ),
-                class_labels=camera_condition.view(B, -1).repeat(
-                    lora_n_timestamp_samples, 1
-                ),
-                cross_attention_kwargs={"scale": 1.0},
-            ).sample
+        with torch.cuda.amp.autocast(enabled=False):
+            noise_pred = self.unet_lora( # ! NOTE: potential location for checkpointing
+                    noisy_latents,
+                    t,
+                    encoder_hidden_states=text_embeddings.repeat(
+                        lora_n_timestamp_samples, 1, 1
+                    ),
+                    class_labels=camera_condition.view(B, -1).repeat(
+                        lora_n_timestamp_samples, 1
+                    ),
+                    cross_attention_kwargs={"scale": 1.0},
+                ).sample
 
         return F.mse_loss(noise_pred.float(), target.float(), reduction="mean")
 

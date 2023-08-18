@@ -33,7 +33,7 @@ if __name__ == '__main__':
     parser.add_argument('--eval_interval', type=int, default=1, help="evaluate on the valid set every interval epochs")
     parser.add_argument('--test_interval', type=int, default=100, help="test on the test set every interval epochs")
     parser.add_argument('--workspace', type=str, default='workspace')
-    parser.add_argument('--seed', default=None)
+    parser.add_argument('--seed', default=42)
 
     parser.add_argument('--image', default=None, help="image prompt")
     parser.add_argument('--image_config', default=None, help="image config csv")
@@ -171,6 +171,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_epoch', type=int, default=-1)
     parser.add_argument('--test_camera_path_json', default=None)
     parser.add_argument('--base_workspace', default=None)
+    parser.add_argument('--vsd_fp32', action='store_true')
 
 
     opt = parser.parse_args()
@@ -181,7 +182,9 @@ if __name__ == '__main__':
         opt.fp16 = True
         opt.cuda_ray = True
         if opt.perform_VSD_on_pretrained:
-            opt.fp16 = False
+            opt.fp16 = True
+            if opt.vsd_fp32:
+                opt.fp16 = False
 
     elif opt.O2:
         opt.fp16 = True
